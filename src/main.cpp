@@ -1,14 +1,16 @@
 #include <math.h>
 #include <uWS/uWS.h>
 #include <iostream>
-#include "json.hpp"
 #include "FusionEKF.h"
 #include "tools.h"
+#include "json.hpp"
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 using std::string;
 using std::vector;
+using std::cout;
+using std::endl;
 
 // for convenience
 using json = nlohmann::json;
@@ -32,16 +34,30 @@ string hasData(string s) {
 int main() {
   uWS::Hub h;
 
-  // Create a Kalman Filter instance
+  // Create a Kalman Filter Fusion instance
   FusionEKF fusionEKF;
 
-  // used to compute the RMSE later
+  // Create a Tools instance to compute the RMSE later
   Tools tools;
+
+  /*
+   * Create to vectors of type VectorXd, which will hold all estimations and all ground truth values
+   * With these values the RMSE can be calculated
+   */
   vector<VectorXd> estimations;
   vector<VectorXd> ground_truth;
 
+  /*
+   * Implement function .onMessage from the uWS::Hub object
+   * This function will be executed, once the start button within the simulation environment is clicked
+   * The first argument is optional and therefore in square brackets. The given values are
+   * the adress to the fusionEKF object, the address to the tools object as well as the addresses to the estimation and
+   * ground truth values.
+   * The other arguments are the websocket to connect to, the actual data as a pointer to a char object and the length of
+   * this string
+   */
   h.onMessage([&fusionEKF,&tools,&estimations,&ground_truth]
-              (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, 
+              (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -53,20 +69,21 @@ int main() {
         auto j = json::parse(s);
 
         string event = j[0].get<string>();
-        
+
         if (event == "telemetry") {
           // j[1] is the data JSON object
           string sensor_measurement = j[1]["sensor_measurement"];
-          
+
           MeasurementPackage meas_package;
           std::istringstream iss(sensor_measurement);
-          
+
           long long timestamp;
 
           // reads first element from the current line
           string sensor_type;
           iss >> sensor_type;
 
+          // Store laser data in measurement package object
           if (sensor_type.compare("L") == 0) {
             meas_package.sensor_type_ = MeasurementPackage::LASER;
             meas_package.raw_measurements_ = VectorXd(2);
@@ -77,6 +94,7 @@ int main() {
             meas_package.raw_measurements_ << px, py;
             iss >> timestamp;
             meas_package.timestamp_ = timestamp;
+          // Store radar data in measurement package object
           } else if (sensor_type.compare("R") == 0) {
             meas_package.sensor_type_ = MeasurementPackage::RADAR;
             meas_package.raw_measurements_ = VectorXd(3);
@@ -102,19 +120,20 @@ int main() {
 
           VectorXd gt_values(4);
           gt_values(0) = x_gt;
-          gt_values(1) = y_gt; 
+          gt_values(1) = y_gt;
           gt_values(2) = vx_gt;
           gt_values(3) = vy_gt;
           ground_truth.push_back(gt_values);
-          
+          //cout << gt_values << endl;
+          //cout << meas_package.raw_measurements_ << endl;
           // Call ProcessMeasurement(meas_package) for Kalman filter
-          fusionEKF.ProcessMeasurement(meas_package);       
+          fusionEKF.ProcessMeasurement(meas_package);
 
-          // Push the current estimated x,y positon from the Kalman filter's 
+          // Push the current estimated x,y positon from the Kalman filter's
           //   state vector
-
           VectorXd estimate(4);
 
+          // store processed state vector in new variables
           double p_x = fusionEKF.ekf_.x_(0);
           double p_y = fusionEKF.ekf_.x_(1);
           double v1  = fusionEKF.ekf_.x_(2);
@@ -124,9 +143,10 @@ int main() {
           estimate(1) = p_y;
           estimate(2) = v1;
           estimate(3) = v2;
-        
+
           estimations.push_back(estimate);
 
+          // Calculates the RMSE from the estimations and ground truth values
           VectorXd RMSE = tools.CalculateRMSE(estimations, ground_truth);
 
           json msgJson;
@@ -154,7 +174,7 @@ int main() {
     std::cout << "Connected!!!" << std::endl;
   });
 
-  h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, 
+  h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code,
                          char *message, size_t length) {
     ws.close();
     std::cout << "Disconnected" << std::endl;
@@ -167,6 +187,6 @@ int main() {
     std::cerr << "Failed to listen to port" << std::endl;
     return -1;
   }
-  
+
   h.run();
 }
